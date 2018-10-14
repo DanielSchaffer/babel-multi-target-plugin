@@ -9,16 +9,9 @@ Webpack plugin, `BabelMultiTargetPlugin`.
 
 [![NPM](https://nodei.co/npm/webpack-babel-multi-target-plugin.png)](https://npmjs.org/package/webpack-babel-multi-target-plugin)
 
-Using the plugin requires make a few small changes to your existing webpack configuration:
+Using the plugin requires making a few small changes to your existing webpack configuration:
 
 * Replace any instances of `babel-loader` with `BabelMultiTargetPlugin.loader()`
-
-* TypeScript
-  * Loader rules must use `BabelMultiTargetPlugin.loader()` after your compiler loader (remember, loaders are run bottom to top)
-  * Set `tsconfig` to `target` es6 or higher
-
-* Vue
-  * Replace `'vue-loader'` with `BabelMultiTargetPlugin.loader('vue-loader')`
 
 * Set `resolve.mainFields` to include `es2015`, which allows webpack to
 load the es2015 modules if a package provides them according to the
@@ -32,6 +25,13 @@ other package standards.
 be customized (see below)
 
 * Remove any `.babelrc` - see "Options Reference" below for setting preset options
+
+* TypeScript
+  * Loader rules must use `BabelMultiTargetPlugin.loader()` after your compiler loader (remember, loaders are run bottom to top)
+  * Set `tsconfig` to `target` es6 or higher
+
+* Vue
+  * Replace `'vue-loader'` with `BabelMultiTargetPlugin.loader('vue-loader')`
 
 ## Configuration Defaults
 
