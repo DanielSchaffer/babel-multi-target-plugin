@@ -6,6 +6,8 @@
 </template>
 
 <script>
+import moment from 'moment'
+
 export default {
   name: 'HelloWorld',
   props: {
@@ -13,7 +15,8 @@ export default {
   },
   methods: {
     greet() {
-      window.alert(`prop msg: ${this.msg}`)
+      const date = moment().format()
+      window.alert(`prop msg: ${this.msg}, ${date}`)
     }
   },
   mounted() {
