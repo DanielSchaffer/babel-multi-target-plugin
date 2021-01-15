@@ -1,5 +1,5 @@
 <template>
-  <div class="panel-container">
+  <div class="panel-container foobar">
     <welcome :exampleName="exampleName" :statusMessage="statusMessage" :logoData="logoData" />
     <clicks />
   </div>
@@ -30,3 +30,9 @@
     }
   }
 </script>
+
+<style scoped>
+.foobar {
+  font-family: monospace
+}
+</style>
