@@ -1,11 +1,8 @@
-import { AlterAssetTagsData, HtmlTag, HtmlWebpackPlugin } from 'html-webpack-plugin'
-import { Compiler, Plugin } from 'webpack'
-import * as webpack from 'webpack'
-import Compilation = webpack.compilation.Compilation
-import Module = webpack.compilation.Module
+import { HtmlTagObject, getHooks } from 'html-webpack-plugin'
+import HtmlWebpackPlugin = require('html-webpack-plugin')
+import { Compiler, Compilation, Module, Plugin, RuntimeGlobals } from 'webpack'
 
 import { BabelTarget } from './babel-target'
-import { getAlterAssetTags, getBodyTags, setBodyTags } from './html-webpack-plugin.polyfill'
 
 export class NormalizeModuleIdsPlugin implements Plugin {
 
@@ -20,21 +17,26 @@ export class NormalizeModuleIdsPlugin implements Plugin {
   }
 
   private applyModuleIdNormalizing(compiler: Compiler): void {
-    compiler.hooks.compilation.tap(this.pluginName(), (compilation: Compilation) => {
-      if (compilation.name) {
-        return
-      }
-      compilation.hooks.moduleIds.tap(this.pluginName(), (modules: Module[]) => {
-        modules.forEach((module: any) => {
-          if (BabelTarget.isTaggedRequest(module.id)) {
-            const queryIndex = module.id.indexOf('?')
-            const ogId = module.id.substring(0, queryIndex)
-            const query = module.id.substring(queryIndex + 1)
-            const queryParts = query.split('&').filter((part: string) => !part.startsWith('babel-target'))
-            if (!queryParts.length) {
-              module.id = ogId
-            } else {
-              module.id = `${ogId}?${queryParts.join('&')}`
+    // NamedModuleIdsPlugin changed to moduleIds
+    compiler.hooks.afterPlugins.tap(this.pluginName(), compiler => {
+      compiler.hooks.compilation.tap(this.pluginName(), (compilation: Compilation) => {
+        if (compilation.name) {
+          return
+        }
+        compilation.hooks.moduleIds.tap(this.pluginName(), modules => {
+          const { chunkGraph } = compilation
+          for (const module of modules) {
+            const id = chunkGraph.getModuleId(module) as string
+            if (BabelTarget.isTaggedRequest(id)) {
+              const queryIndex = id.indexOf('?')
+              const ogId = id.substring(0, queryIndex)
+              const query = id.substring(queryIndex + 1)
+              const queryParts = query.split('&').filter((part: string) => !part.startsWith('babel-target'))
+              if (!queryParts.length) {
+                chunkGraph.setModuleId(module, ogId)
+              } else {
+                chunkGraph.setModuleId(module, `${ogId}?${queryParts.join('&')}`)
+              }
             }
           }
         })
@@ -43,26 +45,29 @@ export class NormalizeModuleIdsPlugin implements Plugin {
   }
 
   private applyConditionJsonpCallback(compiler: Compiler): void {
-    compiler.hooks.afterPlugins.tap(this.pluginName(), () => {
-      compiler.hooks.thisCompilation.tap(this.pluginName(), (compilation: Compilation) => {
-        if (compilation.name) {
-          return
-        }
-        const hooks = compilation.mainTemplate.hooks as any
-        hooks.beforeStartup.tap(this.pluginName('conditional jsonp callback'), (source: string) => {
-          const insertPointCode = 'var oldJsonpFunction = jsonpArray.push.bind(jsonpArray);\n'
-          const insertPoint = source.indexOf(insertPointCode)
-          if (insertPoint < 0) {
-            return
-          }
-          const before = source.substring(0, insertPoint)
-          const after = source.substring(insertPoint)
-          return `${before}if (jsonpArray.push.name === 'webpackJsonpCallback') return;\n${after}`
+    // TODO: for browsers which load module and nomdule script like Safari 10.1
+    // hook into webpack's runtime to prevent them from running twice
+    // maybe figure it out next time
+    // compiler.hooks.afterPlugins.tap(this.pluginName(), () => {
+    //   compiler.hooks.thisCompilation.tap(this.pluginName(), (compilation: Compilation) => {
+    //     if (compilation.name) {
+    //       return
+    //     }
+    //     const hooks = compilation.mainTemplate.hooks as any
+    //     hooks.beforeStartup.tap(this.pluginName('conditional jsonp callback'), (source: string) => {
+    //       const insertPointCode = 'var oldJsonpFunction = jsonpArray.push.bind(jsonpArray);\n'
+    //       const insertPoint = source.indexOf(insertPointCode)
+    //       if (insertPoint < 0) {
+    //         return
+    //       }
+    //       const before = source.substring(0, insertPoint)
+    //       const after = source.substring(insertPoint)
+    //       return `${before}if (jsonpArray.push.name === 'webpackJsonpCallback') return;\n${after}`
 
-        })
-      })
-      return compiler
-    })
+    //     })
+    //   })
+    //   return compiler
+    // })
   }
 
   private applyHtmlWebpackTagOrdering(compiler: Compiler): void {
@@ -84,16 +89,15 @@ export class NormalizeModuleIdsPlugin implements Plugin {
           return
         }
 
-        const hook = getAlterAssetTags(compilation)
-        
-        hook.tapPromise(this.pluginName('reorder asset tags'),
-          async (htmlPluginData: AlterAssetTagsData) => {
+        // TODO: runtime should be first
+        getHooks(compilation).alterAssetTagGroups.tapPromise(this.pluginName('reorder asset tags'),
+          async (htmlPluginData) => {
 
-            const body = getBodyTags(htmlPluginData)
+            const body = htmlPluginData.bodyTags
             const tags = body.slice(0)
 
             // re-sort the tags so that es module tags are rendered first, otherwise maintaining the original order
-            body.sort((a: HtmlTag, b: HtmlTag) => {
+            body.sort((a, b) => {
               const aIndex = tags.indexOf(a)
               const bIndex = tags.indexOf(b)
               if (a.tagName !== 'script' || b.tagName !== 'script' ||
@@ -110,13 +114,13 @@ export class NormalizeModuleIdsPlugin implements Plugin {
               return 1
             })
 
-            body.forEach((tag: HtmlTag) => {
+            body.forEach((tag: HtmlTagObject) => {
               if (tag.tagName === 'script' && tag.attributes && tag.attributes.nomodule) {
                 tag.attributes.defer = true
               }
             })
 
-            setBodyTags(htmlPluginData, body)
+            htmlPluginData.bodyTags = body
 
             return htmlPluginData
 

@@ -58,6 +58,7 @@ module.exports = (workingDir, examples, options = {}) => ({
       {
         test: /\.html$/,
         loader: 'html-loader',
+        enforce: 'post'
       },
       {
         test: /\.(jpe?g|png|gif)/,

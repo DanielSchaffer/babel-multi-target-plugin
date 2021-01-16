@@ -1,16 +1,17 @@
 import { BabelLoaderTransformOptions, BabelPresetOptions } from 'babel-loader'
-import * as webpack from 'webpack'
-import Chunk = webpack.compilation.Chunk
-import ChunkGroup = webpack.compilation.ChunkGroup
-import Entrypoint = webpack.compilation.Entrypoint
-import Module = webpack.compilation.Module
+import { ModuleGraph, ChunkGraph } from 'webpack'
+
+import Entrypoint = require('webpack/lib/Entrypoint')
+import Chunk = require('webpack/lib/Chunk')
+import ChunkGroup = require('webpack/lib/ChunkGroup')
+import Module = require('webpack/lib/Module')
 
 import { BabelLoaderCacheDirectoryOption } from './babel.multi.target.options'
 import { BabelTargetOptions } from './babel.target.options'
+import { BabelTargetEntryDependency } from './babel.target.entry.dependency'
 import { BrowserProfileName, StandardBrowserProfileName } from './browser.profile.name'
 import { DEV_SERVER_CLIENT } from './constants'
 import {
-  DEFAULT_BABEL_PLUGINS,
   DEFAULT_BABEL_PRESET_OPTIONS,
   DEFAULT_BROWSERS,
   DEFAULT_TARGET_INFO,
@@ -26,67 +27,6 @@ export type BabelTargetSource = Module | Chunk | ChunkGroup
 export type BabelTargetInfo = { [TOption in keyof BabelTargetOptions]: BabelTargetOptions[TOption] } & {
   readonly profileName: BrowserProfileName
   readonly options: BabelLoaderTransformOptions
-}
-
-// webpack doesn't actually export things from the `compilation` namespace, so can only use them to
-// type checking, not anything at runtime like instanceof
-// so, need to do this instead
-const SIG = {
-  module: [
-    'disconnect',
-    'unseal',
-    'isEntryModule',
-    'isInChunk',
-  ],
-  entrypoint: [
-    'isInitial',
-    'getFiles',
-    'getRuntimeChunk',
-    'setRuntimeChunk',
-  ],
-  chunk: [
-    'hasRuntime',
-    'canBeInitial',
-    'isOnlyInitial',
-    'hasEntryModule',
-    'addModule',
-    'removeModule',
-    'setModules',
-    'getNumberOfModules',
-    'addGroup',
-    'isInGroup',
-    'canBeIntegrated',
-  ],
-  chunkGroup: [
-    'unshiftChunk',
-    'insertChunk',
-    'pushChunk',
-    'replaceChunk',
-    'isInitial',
-    'addChild',
-    'getChildren',
-    'getNumberOfChildren',
-  ],
-}
-
-function hasSig(obj: any, sig: string[]): boolean {
-  return sig.every(name => typeof obj[name] === 'function')
-}
-
-function isModule(obj: any): obj is Module {
-  return hasSig(obj, SIG.module)
-}
-
-function isEntrypoint(obj: any): obj is Entrypoint {
-  return hasSig(obj, SIG.entrypoint)
-}
-
-function isChunkGroup(obj: any): obj is ChunkGroup {
-  return hasSig(obj, SIG.chunkGroup)
-}
-
-function isChunk(obj: any): obj is Chunk {
-  return hasSig(obj, SIG.chunk)
 }
 
 export class BabelTarget implements BabelTargetInfo {
@@ -105,7 +45,11 @@ export class BabelTarget implements BabelTargetInfo {
   }
 
   public getTargetedAssetName(name: string): string {
-    return this.tagAssetsWithKey ? `${name}.${this.key}` : name
+    // sometimes a asset will be targeted twice
+    if (this.tagAssetsWithKey && !name.endsWith(`.${this.key}`)) {
+      return `${name}.${this.key}`
+    }
+    return name
   }
 
   public getTargetedRequest(request: string): string {
@@ -136,21 +80,20 @@ export class BabelTarget implements BabelTargetInfo {
     return targets.find(target => target.key === key)
   }
 
-  public static getTargetFromModule(module: Module): BabelTarget {
-    if (module.options && module.options.babelTarget) {
+  public static getTargetFromModule(module: Module, moduleGraph: ModuleGraph): BabelTarget {
+    if (module.options?.babelTarget) {
       return module.options.babelTarget
     }
 
-    if (!module.reasons) {
-      return undefined
-    }
+    // https://github.com/webpack/webpack/pull/7826/commits/381e2db2009b0020de358c23c702d074806980a5
+    const reasons = Array.from(moduleGraph.getIncomingConnections(module))
 
-    for (const reason of module.reasons) {
-      if (reason.dependency && reason.dependency.babelTarget) {
+    for (const reason of reasons) {
+      if (reason.dependency && reason.dependency instanceof BabelTargetEntryDependency) {
         return reason.dependency.babelTarget
       }
-      if (reason.module) {
-        const target = BabelTarget.getTargetFromModule(reason.module)
+      if (reason.module && reason.module !== module) {
+        const target = BabelTarget.getTargetFromModule(reason.module, moduleGraph)
         if (target) {
           return target
         }
@@ -161,11 +104,13 @@ export class BabelTarget implements BabelTargetInfo {
 
   }
 
-  public static getTargetFromEntrypoint(entrypoint: Entrypoint): BabelTarget {
-    if (!entrypoint.runtimeChunk.hasEntryModule()) {
+  public static getTargetFromEntrypoint(entrypoint: Entrypoint, moduleGraph: ModuleGraph, chunkGraph: ChunkGraph): BabelTarget {
+    const runtime = entrypoint.getRuntimeChunk()
+    const modules = Array.from(chunkGraph.getChunkEntryModulesIterable(runtime))
+    if (modules.length === 0) {
       return undefined
     }
-    return BabelTarget.getTargetFromModule(entrypoint.runtimeChunk.entryModule)
+    return BabelTarget.getTargetFromModule(modules[0], moduleGraph)
   }
 
   // eslint-disable-next-line
@@ -173,27 +118,27 @@ export class BabelTarget implements BabelTargetInfo {
     return undefined
   }
 
-  public static getTargetFromChunk(chunk: Chunk): BabelTarget {
-    if (chunk.entryModule) {
-      return BabelTarget.getTargetFromModule(chunk.entryModule)
+  public static getTargetFromChunk(chunk: Chunk, moduleGraph: ModuleGraph, chunkGraph: ChunkGraph): BabelTarget {
+    const modules = Array.from(chunkGraph.getChunkEntryModulesIterable(chunk))
+    if (modules.length === 0) {
+      return undefined
     }
-
-    return undefined
+    return BabelTarget.getTargetFromModule(modules[0], moduleGraph)
   }
 
-  public static findTarget(source: BabelTargetSource): BabelTarget {
+  public static findTarget(source: BabelTargetSource, moduleGraph: ModuleGraph, chunkGraph: ChunkGraph): BabelTarget {
 
-    if (isModule(source)) {
-      return BabelTarget.getTargetFromModule(source)
+    if (source instanceof Module) {
+      return BabelTarget.getTargetFromModule(source, moduleGraph)
     }
-    if (isEntrypoint(source)) {
-      return BabelTarget.getTargetFromEntrypoint(source)
+    if (source instanceof Entrypoint) {
+      return BabelTarget.getTargetFromEntrypoint(source, moduleGraph, chunkGraph)
     }
-    if (isChunkGroup(source)) {
+    if (source instanceof ChunkGroup) {
       return BabelTarget.getTargetFromGroup(source)
     }
-    if (isChunk(source)) {
-      return BabelTarget.getTargetFromChunk(source)
+    if (source instanceof Chunk) {
+      return BabelTarget.getTargetFromChunk(source, moduleGraph, chunkGraph)
     }
 
     return undefined
@@ -228,18 +173,14 @@ export class BabelTargetFactory {
 
   public createTransformOptions(key: string, browsers: string[], loaderOptions: { cacheDirectory?: BabelLoaderCacheDirectoryOption }): BabelLoaderTransformOptions {
 
-    const mergedPresetOptions: BabelPresetOptions = Object.assign(
-      {},
-      DEFAULT_BABEL_PRESET_OPTIONS,
-      this.presetOptions,
-      {
-        targets: {
-          browsers,
-        },
-      }, {
-        modules: false,
+    const mergedPresetOptions: BabelPresetOptions = {
+      ...DEFAULT_BABEL_PRESET_OPTIONS,
+      ...this.presetOptions,
+      targets: {
+        browsers,
       },
-    )
+      modules: false,
+    }
 
     const cacheDirectory = this.getCacheDirectory(key, loaderOptions.cacheDirectory)
 
@@ -249,7 +190,7 @@ export class BabelTargetFactory {
         ...this.presets,
       ],
       plugins: [
-        ...DEFAULT_BABEL_PLUGINS,
+        // https://github.com/babel/babel/issues/10271#issuecomment-528379505
         ...this.plugins,
       ],
       cacheDirectory,

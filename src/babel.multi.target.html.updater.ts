@@ -1,13 +1,9 @@
-import { AlterAssetTagsData, HtmlTag, HtmlWebpackPlugin } from 'html-webpack-plugin'
-import { compilation, Compiler, Plugin } from 'webpack'
+import { getHooks, HtmlTagObject } from 'html-webpack-plugin'
+import { Chunk, ChunkGroup, Compilation, Compiler, Plugin } from 'webpack'
 
 import { BabelTarget } from './babel-target'
-import { getAlterAssetTags, getHeadTags, getBodyTags } from './html-webpack-plugin.polyfill'
 import { PLUGIN_NAME } from './plugin.name'
 import { TargetedChunkMap } from './targeted.chunk'
-import Chunk = compilation.Chunk
-import ChunkGroup = compilation.ChunkGroup
-import Compilation = compilation.Compilation
 
 // Works with HtmlWebpackPlugin to make sure the targeted assets are referenced correctly
 // Tags for assets whose target has `esModule` set are updated with the `"type"="module"` attribute
@@ -20,15 +16,13 @@ export class BabelMultiTargetHtmlUpdater implements Plugin {
 
   constructor(private targets: BabelTarget[]) {}
 
-  public updateScriptTags(chunkMap: TargetedChunkMap, tags: HtmlTag[]): void {
-
+  public updateScriptTags(chunkMap: TargetedChunkMap, tags: HtmlTagObject[]): void {
     tags
-      .forEach((tag: HtmlTag) => {
+      .forEach((tag: HtmlTagObject) => {
         if (tag.tagName !== 'script') {
           return
         }
-
-        const targetedChunks = chunkMap.get(tag.attributes.src)
+        const targetedChunks = chunkMap.get(tag.attributes.src as string)
         // chunks that are added outside of an entry point (e.g. by HtmlWebpackIncludeAssetsPlugin) will not be targeted
         if (!targetedChunks) {
           return
@@ -83,7 +77,7 @@ export class BabelMultiTargetHtmlUpdater implements Plugin {
   public apply(compiler: Compiler): void {
 
     compiler.hooks.afterPlugins.tap(PLUGIN_NAME, () => {
-      const htmlWebpackPlugin: HtmlWebpackPlugin = compiler.options.plugins
+      const htmlWebpackPlugin = compiler.options.plugins
       // instanceof can act wonky since we don't actually keep our own dependency on html-webpack-plugin
       // should we?
         .find(plugin => plugin.constructor.name === 'HtmlWebpackPlugin') as any
@@ -94,18 +88,16 @@ export class BabelMultiTargetHtmlUpdater implements Plugin {
 
       // not sure if this is a problem since webpack will wait for dependencies to load, but sorting
       // by auto/dependency will result in a cyclic dependency error for lazy-loaded routes
-      htmlWebpackPlugin.options.chunksSortMode = 'none' as any
+      htmlWebpackPlugin.userOptions.chunksSortMode = 'none'
 
-      if ((htmlWebpackPlugin.options.chunks as any) !== 'all' &&
-        htmlWebpackPlugin.options.chunks &&
-        htmlWebpackPlugin.options.chunks.length
+      if ((htmlWebpackPlugin.userOptions.chunks) !== 'all' &&
+        htmlWebpackPlugin.userOptions.chunks?.length
       ) {
-        htmlWebpackPlugin.options.chunks = this.mapChunkNames(htmlWebpackPlugin.options.chunks as string[])
+        htmlWebpackPlugin.userOptions.chunks = this.mapChunkNames(htmlWebpackPlugin.userOptions.chunks as string[])
       }
 
-      if (htmlWebpackPlugin.options.excludeChunks &&
-        htmlWebpackPlugin.options.excludeChunks.length) {
-        htmlWebpackPlugin.options.excludeChunks = this.mapChunkNames(htmlWebpackPlugin.options.excludeChunks)
+      if (htmlWebpackPlugin.userOptions.excludeChunks?.length) {
+        htmlWebpackPlugin.userOptions.excludeChunks = this.mapChunkNames(htmlWebpackPlugin.userOptions.excludeChunks)
       }
 
       compiler.hooks.compilation.tap(PLUGIN_NAME, (compilation: Compilation) => {
@@ -114,20 +106,20 @@ export class BabelMultiTargetHtmlUpdater implements Plugin {
           return
         }
 
-        const hook = getAlterAssetTags(compilation)
-
-        hook.tapPromise(`${PLUGIN_NAME} update asset tags`,
-          async (htmlPluginData: AlterAssetTagsData) => {
+        getHooks(compilation).alterAssetTagGroups.tapPromise(`${PLUGIN_NAME} update asset tags`,
+          async (htmlPluginData) => {
+            const hash = compilation.hash
+            const publicPath = compilation.getAssetPath(compilation.outputOptions.publicPath, { hash })
             const chunkMap: TargetedChunkMap = compilation.chunkGroups.reduce((result: TargetedChunkMap, chunkGroup: ChunkGroup) => {
               chunkGroup.chunks.forEach((chunk: Chunk) => {
                 chunk.files.forEach((file: string) => {
-                  result.set(file, chunkGroup, chunk)
+                  result.set(file, chunkGroup, chunk, compilation.chunkGraph, compilation.moduleGraph)
                 })
               })
               return result
-            }, new TargetedChunkMap(compiler.options.output.publicPath))
-            this.updateScriptTags(chunkMap, getHeadTags(htmlPluginData))
-            this.updateScriptTags(chunkMap, getBodyTags(htmlPluginData))
+            }, new TargetedChunkMap(publicPath))
+            this.updateScriptTags(chunkMap, htmlPluginData.headTags)
+            this.updateScriptTags(chunkMap, htmlPluginData.bodyTags)
             return htmlPluginData
           })
 

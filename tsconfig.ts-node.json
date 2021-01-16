@@ -3,8 +3,6 @@
   "files": [
     "src/types/babel.d.ts",
     "src/types/babel-loader.d.ts",
-    "src/types/html-webpack-plugin.d.ts",
-    "src/types/tapable.d.ts",
     "src/types/webpack.d.ts",
     "src/types/webpack.extras.d.ts"
   ],
