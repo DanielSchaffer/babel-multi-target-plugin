@@ -11,11 +11,6 @@ export const DEFAULT_BABEL_PRESET_OPTIONS: BabelPresetOptions = {
   corejs: DEFAULT_COREJS_VERSION,
 }
 
-export const DEFAULT_BABEL_PLUGINS: string[] = [
-  '@babel/plugin-syntax-dynamic-import',
-  '@babel/plugin-transform-runtime',
-]
-
 export const DEFAULT_MODERN_BROWSERS = [
   // The last two versions of each browser, excluding versions
   // that don't support <script type="module">.

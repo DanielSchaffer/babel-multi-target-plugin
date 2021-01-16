@@ -1,8 +1,4 @@
-import { compilation, Compiler, Plugin } from 'webpack'
-
-import Chunk = compilation.Chunk;
-import Compilation = compilation.Compilation;
-import Origin = compilation.Origin;
+import { Chunk, Compilation, Compiler, Plugin, ModuleGraph, ChunkGraph, Entrypoint } from 'webpack'
 
 import { BabelTarget } from './babel-target'
 
@@ -13,24 +9,27 @@ const PLUGIN_NAME = 'NamedLazyChunksPlugin'
  */
 export class NamedLazyChunksPlugin implements Plugin {
 
-  private getNameFromOrigins(chunk: Chunk): string {
+  private getNameFromOrigins(chunk: Chunk, moduleGraph: ModuleGraph, chunkGraph: ChunkGraph): string {
 
-    const nameInfo = [...chunk.groupsIterable].reduce((result: any, group) => {
+    // TODO: why is this Entrypoint
+    const nameInfo = Array.from(chunk.groupsIterable).reduce((result, group: Entrypoint) => {
       if (!group.origins) {
         return
       }
-      if (group.runtimeChunk === chunk) {
-        result.origins = [ group.runtimeChunk.entryModule.reasons[0].dependencies.originalName ]
+      const runtimeChunk = group.getRuntimeChunk()
+      if (runtimeChunk === chunk) {
+        const reasons = Array.from(moduleGraph.getIncomingConnections(runtimeChunk.entryModule))
+        result.origins = [ reasons[0].dependency.originalName ]
         result.isEntry = true
       }
-      group.origins.forEach((origin: Origin) => {
+      group.origins.forEach((origin) => {
         const isLazyModule = origin.module && origin.module.options && origin.module.options.mode === 'lazy'
         const isNgFactory = origin.request && origin.request.match(/\.ngfactory(?:\?babel-target=\w+)?$/)
         if (!isLazyModule && !isNgFactory) {
           return
         }
         if (!result.babelTarget) {
-          result.babelTarget = BabelTarget.findTarget(origin.module)
+          result.babelTarget = BabelTarget.findTarget(origin.module, moduleGraph, chunkGraph)
         }
         if (result.isEntry) {
           return
@@ -49,8 +48,7 @@ export class NamedLazyChunksPlugin implements Plugin {
 
       })
       return result
-    }, { origins: [] } as { origins: string[], babelTarget?: BabelTarget })
-
+    }, { origins: [] } as { origins: string[], babelTarget?: BabelTarget, isEntry: boolean })
 
     const name = nameInfo.origins.join('~')
     return nameInfo.babelTarget.tagAssetsWithKey ? `${name}.${nameInfo.babelTarget.key}` : name
@@ -68,7 +66,7 @@ export class NamedLazyChunksPlugin implements Plugin {
             return
           }
           const isVendorsChunk = chunk.chunkReason === 'split chunk (cache group: vendors)'
-          let name = this.getNameFromOrigins(chunk)
+          let name = this.getNameFromOrigins(chunk, compilation.moduleGraph, compilation.chunkGraph)
           if (isVendorsChunk) {
             name = `vendors~` + name
           }
@@ -82,7 +80,7 @@ export class NamedLazyChunksPlugin implements Plugin {
           if (usedNames[name] > 0) {
             name += `.${usedNames[name]}`
           }
-          chunk.id = name as any
+          chunk.id = name
         })
       })
     })

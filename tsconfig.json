@@ -10,6 +10,7 @@
     "emitDecoratorMetadata": true,
     "experimentalDecorators": true,
     "noImplicitAny": true,
+    "strictBindCallApply": true,
     "outDir": "dist",
     "lib": [
       "ESNext"

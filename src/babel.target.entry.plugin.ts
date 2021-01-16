@@ -1,25 +1,30 @@
-import { compilation, Compiler, Plugin } from 'webpack'
-import Compilation = compilation.Compilation
-import Dependency = compilation.Dependency
-import NormalModuleFactory = compilation.NormalModuleFactory
+import { Compiler, EntryPlugin, Compilation, Dependency } from 'webpack'
 
 import { BabelTarget }                      from './babel-target'
-import { BabelTargetSingleEntryDependency } from './babel.target.single.entry.dependency'
 import { BabelTargetEntryDependency }       from './babel.target.entry.dependency'
 
-export abstract class BabelTargetEntryPlugin implements Plugin {
-
-  protected constructor(protected targets: BabelTarget[], protected context: string, protected name: string) {
-  }
+export class BabelTargetEntryPlugin implements EntryPlugin {
+  public constructor(protected targets: BabelTarget[], public context: string,
+    public entry: string, public options: EntryPlugin['options']) {}
 
   public apply(compiler: Compiler): void {
     compiler.hooks.compilation.tap(
       this.constructor.name,
-      (compilation: Compilation, { normalModuleFactory }: { normalModuleFactory: NormalModuleFactory }) => {
-        (compilation.dependencyFactories as Map<any, any>).set(
-          BabelTargetSingleEntryDependency,
+      (compilation: Compilation, { normalModuleFactory }) => {
+        compilation.dependencyFactories.set(
+          BabelTargetEntryDependency,
           normalModuleFactory,
         )
+      },
+    )
+  
+    compiler.hooks.make.tapPromise(
+      this.constructor.name,
+      async (compilation: Compilation) => {
+        await Promise.all(this.targets.map(async target => {
+          const dep = new BabelTargetEntryDependency(target, this.entry, typeof this.options === 'string' ? this.options : this.options.name)
+          return await this.addEntry(compilation, dep)
+        }))
       },
     )
   }

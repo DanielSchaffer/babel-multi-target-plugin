@@ -1,13 +1,11 @@
 import { readFileSync } from 'fs'
 import { resolve } from 'path'
 
-import { AlterAssetTagsData, HtmlTag, HtmlWebpackPlugin } from 'html-webpack-plugin'
-import * as webpack from 'webpack'
-import { Compiler, Plugin } from 'webpack'
+import { getHooks, HtmlTagObject } from 'html-webpack-plugin'
+import HtmlWebpackPlugin = require('html-webpack-plugin')
+import { Compiler, Compilation, Plugin } from 'webpack'
 import { RawSource } from 'webpack-sources'
-import * as terser from 'terser';
-
-import Compilation = webpack.compilation.Compilation
+import * as terser from 'terser'
 
 import { SafariNoModuleFixMode, SafariNoModuleFixInject, SafariNoModuleFixOption, SafariNoModuleFixOptionMap } from '../babel.multi.target.options'
 import { PLUGIN_NAME } from '../plugin.name'
@@ -19,14 +17,13 @@ export class SafariNoModuleFixPlugin implements Plugin {
   private inject: SafariNoModuleFixInject
   private minify: boolean
 
-  constructor(private option: SafariNoModuleFixOption) {
+  constructor(option: SafariNoModuleFixOption) {
     if (typeof option === 'object') {
       const options = option as SafariNoModuleFixOptionMap
       this.mode = typeof options.mode !== 'undefined' ? options.mode : true
       this.inject = options.inject ? options.inject : SafariNoModuleFixInject.head
       this.minify = !!options.minify
-    }
-    else {
+    } else {
       this.mode = option as (boolean | SafariNoModuleFixMode)
       this.inject = SafariNoModuleFixInject.head
       this.minify = false
@@ -123,9 +120,9 @@ export class SafariNoModuleFixPlugin implements Plugin {
         return
       }
 
-      compilation.hooks.htmlWebpackPluginAlterAssetTags.tapPromise(`${PLUGIN_NAME} add safari nomodule fix tags`,
-        async (htmlPluginData: AlterAssetTagsData) => {
-          const element = this.inject === SafariNoModuleFixInject.body ? htmlPluginData.body : htmlPluginData.head
+      getHooks(compilation).alterAssetTagGroups.tapPromise(`${PLUGIN_NAME} add safari nomodule fix tags`,
+        async (htmlPluginData) => {
+          const element = this.inject === SafariNoModuleFixInject.body ? htmlPluginData.bodyTags : htmlPluginData.headTags
           element.unshift(this.createSafariNoModuleFixTag())
           return htmlPluginData
         })
@@ -133,11 +130,11 @@ export class SafariNoModuleFixPlugin implements Plugin {
     })
   }
 
-  private createSafariNoModuleFixTag(): HtmlTag {
+  private createSafariNoModuleFixTag(): HtmlTagObject {
 
-    const tag: HtmlTag  = {
+    const tag: HtmlTagObject = {
       tagName: 'script',
-      closeTag: true,
+      voidTag: false,
       attributes: {
         nomodule: true,
         type: 'application/javascript',
@@ -152,9 +149,9 @@ export class SafariNoModuleFixPlugin implements Plugin {
     let fixContent = readFileSync(resolve(__dirname, 'safari.nomodule.fix.js'))
 
     if (this.minify) {
-      fixContent = new Buffer (terser
+      fixContent = Buffer.from(terser
         .minify(fixContent.toString('utf-8'))
-        .code)
+        .code, 'utf-8')
     }
 
     if (this.mode === true || this.mode === SafariNoModuleFixMode.inline) {
